@@ -2,6 +2,8 @@
 
 A modern, frontend-heavy KYC (Know Your Customer) and KYB (Know Your Business) verification platform built with Next.js, TypeScript, and Tailwind CSS. This application allows users to submit verification documents and admins to review and approve/reject submissions.
 
+Check it out here: https://verification-dashboard-l7w3.vercel.app/
+
 ## Features
 
 ### For Applicants
