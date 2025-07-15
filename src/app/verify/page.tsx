@@ -63,7 +63,7 @@ export default function VerifyPage() {
   const {
     register,
     handleSubmit,
-    formState: { errors, isValid },
+    formState: { errors },
     watch,
     setValue,
   } = useForm<FormData>({
@@ -380,7 +380,7 @@ export default function VerifyPage() {
                   <option value="">Select document type</option>
                   <option value="national_id">National ID</option>
                   <option value="passport">Passport</option>
-                  <option value="drivers_license">Driver's License</option>
+                  <option value="drivers_license">Driver&apos;s License</option>
                   <option value="business_license">Business License</option>
                 </select>
                 {errors.documentType && (

@@ -110,7 +110,7 @@ export default function Home() {
                 1
               </div>
               <h4 className="text-lg font-semibold text-gray-900 mb-2">Start Verification</h4>
-              <p className="text-gray-600">Click the "Start Verification" button to begin the process</p>
+              <p className="text-gray-600">Click the &quot;Start Verification&quot; button to begin the process</p>
             </div>
             <div className="text-center">
               <div className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center mx-auto mb-4 text-lg font-bold">

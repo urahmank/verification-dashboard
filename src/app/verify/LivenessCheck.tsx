@@ -2,6 +2,21 @@
 import { useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
 
+interface MediaPipeWindow {
+  FaceMesh?: new (args: unknown) => unknown;
+  drawConnectors?: (ctx: CanvasRenderingContext2D, landmarks: unknown, connections: unknown, style: { color: string; lineWidth: number }) => void;
+}
+
+interface FaceMeshResults {
+  image: HTMLVideoElement;
+  multiFaceLandmarks?: Array<Record<string, { x: number; y: number; z: number }>>;
+}
+interface FaceMeshInstance {
+  setOptions: (opts: Record<string, unknown>) => void;
+  onResults: (cb: (results: FaceMeshResults) => void) => void;
+  send: (input: Record<string, unknown>) => Promise<void>;
+}
+
 const FACEMESH_TESSELATION = [
   [127, 34], [34, 139], [139, 127], [11, 0], [0, 37], [37, 11], [232, 231], [231, 120], [120, 232],
   [72, 37], [37, 39], [39, 72], [128, 121], [121, 47], [47, 128], [232, 121], [128, 232], [104, 69],
@@ -50,33 +65,16 @@ type LivenessCheckProps = {
   canProceed?: boolean;
 };
 
-function dataURItoBlob(dataURI: string): Blob {
-  const binary = atob(dataURI.split(",")[1]);
-  const array = [];
-  for (let i = 0; i < binary.length; i++) {
-    array.push(binary.charCodeAt(i));
-  }
-  return new Blob([new Uint8Array(array)], { type: "image/jpeg" });
-}
-
-export default function LivenessCheck({ onSuccess, onNextStep, canProceed = false }: LivenessCheckProps) {
+export default function LivenessCheck({ onSuccess, onNextStep }: LivenessCheckProps) {
   const webcamRef = useRef<Webcam | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [start, setStart] = useState(false);
   const [question, setQuestion] = useState("Please click once for a selfie video and wait for the liveness instructions!");
   const [status, setStatus] = useState("");
   const [completed, setCompleted] = useState(false);
-  const [fileArray, setFileArray] = useState<File[]>([]);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
-  const [isMobile, setIsMobile] = useState(false);
   const [wait, setWait] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  
-  // Liveness check states
-  const [pass1, setPass1] = useState(true);
-  const [pass2, setPass2] = useState(false);
-  const [pass3, setPass3] = useState(false);
-  const [fileArrayTemp, setFileArrayTemp] = useState<File[]>([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [stepCompleted, setStepCompleted] = useState(false);
 
@@ -86,16 +84,6 @@ export default function LivenessCheck({ onSuccess, onNextStep, canProceed = fals
     aspectRatio: 1.5,
     facingMode: facingMode,
   };
-
-  useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth < 720);
-    };
-    
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
 
   const startProcess = () => {
     setStart(true);
@@ -115,148 +103,100 @@ export default function LivenessCheck({ onSuccess, onNextStep, canProceed = fals
     }
   };
 
-  function onResults(results: any) {
-    const videoWidth = webcamRef.current?.video?.videoWidth || 400;
-    const videoHeight = webcamRef.current?.video?.videoHeight || 300;
-
-    if (canvasRef.current) {
-      canvasRef.current.width = videoWidth;
-      canvasRef.current.height = videoHeight;
-
-      const canvasElement = canvasRef.current;
-      const canvasCtx = canvasElement.getContext("2d");
-      if (!canvasCtx) return;
-
-      canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.drawImage(
-        results.image,
-        0,
-        0,
-        canvasElement.width,
-        canvasElement.height
-      );
-
-      if (results.multiFaceLandmarks && (window as any).drawConnectors) {
-        for (const landmarks of results.multiFaceLandmarks) {
-          let nose_pos: any;
-          let chin_pos: any;
-
-          Object.entries(landmarks).forEach(([idx, ln]: [string, any]) => {
-            // nose
-            if (idx === "1") {
-              nose_pos = ln;
-            }
-            // chin
-            if (idx === "152") {
-              chin_pos = ln;
-            }
-          });
-
-          if (nose_pos && chin_pos) {
-            let deltaX = chin_pos.x - nose_pos.x;
-            let deltaY = chin_pos.y - nose_pos.y;
-            const tiltAngle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
-
-            (window as any).drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {
-              color: "#ffffff25",
-              lineWidth: 0.5,
-            });
-            (window as any).drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {
-              color: "#ffffff25",
-              lineWidth: 1,
-            });
-            (window as any).drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {
-              color: "#ffffff25",
-              lineWidth: 1,
-            });
-
-            if (start && !stepCompleted && !completed) {
-              // Step 1: Look straight
-              if (currentStep === 0 && tiltAngle >= 87 && tiltAngle <= 93) {
-                setStepCompleted(true);
-                setWait(true);
-                setQuestion("Look straight - Capturing...");
-                
-                setTimeout(() => {
-                  const mediaStream = webcamRef.current?.getScreenshot();
-                  if (mediaStream) {
-                    const blob = dataURItoBlob(mediaStream);
-                    let currentTimestamp = Date.now();
-                    const file = new File([blob], currentTimestamp.toString(), {
-                      type: blob.type,
-                      lastModified: new Date().getTime(),
-                    });
-                    setFileArrayTemp(prev => [...prev, file]);
-                    setFileArray(prev => [...prev, file]);
-                    setCurrentStep(1);
-                    setStepCompleted(false);
-                    setWait(false);
-                    setQuestion("Turn Left");
+  useEffect(() => {
+    if (start && webcamRef.current && canvasRef.current && !completed) {
+      const onResults = (results: {
+        image: HTMLVideoElement;
+        multiFaceLandmarks?: Array<Record<string, { x: number; y: number; z: number }>>;
+      }) => {
+        const videoWidth = webcamRef.current?.video?.videoWidth || 400;
+        const videoHeight = webcamRef.current?.video?.videoHeight || 300;
+        if (canvasRef.current) {
+          canvasRef.current.width = videoWidth;
+          canvasRef.current.height = videoHeight;
+          const canvasElement = canvasRef.current;
+          const canvasCtx = canvasElement.getContext("2d");
+          if (!canvasCtx) return;
+          canvasCtx.save();
+          canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+          canvasCtx.drawImage(
+            results.image,
+            0,
+            0,
+            canvasElement.width,
+            canvasElement.height
+          );
+          if (results.multiFaceLandmarks && (window as MediaPipeWindow).drawConnectors) {
+            for (const landmarks of results.multiFaceLandmarks) {
+              let nose_pos: { x: number; y: number; z: number } | undefined;
+              let chin_pos: { x: number; y: number; z: number } | undefined;
+              Object.entries(landmarks).forEach(([idx, ln]: [string, { x: number; y: number; z: number }]) => {
+                if (idx === "1") nose_pos = ln;
+                if (idx === "152") chin_pos = ln;
+              });
+              if (nose_pos && chin_pos) {
+                const deltaX = chin_pos.x - nose_pos.x;
+                const deltaY = chin_pos.y - nose_pos.y;
+                const tiltAngle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+                (window as MediaPipeWindow).drawConnectors?.(canvasCtx, landmarks, FACEMESH_TESSELATION, {
+                  color: "#ffffff25",
+                  lineWidth: 0.5,
+                });
+                (window as MediaPipeWindow).drawConnectors?.(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {
+                  color: "#ffffff25",
+                  lineWidth: 1,
+                });
+                (window as MediaPipeWindow).drawConnectors?.(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {
+                  color: "#ffffff25",
+                  lineWidth: 1,
+                });
+                if (start && !stepCompleted && !completed) {
+                  // Step 1: Look straight
+                  if (currentStep === 0 && tiltAngle >= 87 && tiltAngle <= 93) {
+                    setStepCompleted(true);
+                    setWait(true);
+                    setQuestion("Look straight - Capturing...");
+                    setTimeout(() => {
+                      setCurrentStep(1);
+                      setStepCompleted(false);
+                      setWait(false);
+                      setQuestion("Turn Left");
+                    }, 1000);
                   }
-                }, 1000);
-              }
-              // Step 2: Turn Left
-              else if (currentStep === 1 && tiltAngle >= 100 && tiltAngle <= 115) {
-                setStepCompleted(true);
-                setWait(true);
-                setQuestion("Turn Left - Capturing...");
-                
-                setTimeout(() => {
-                  const mediaStream = webcamRef.current?.getScreenshot();
-                  if (mediaStream) {
-                    const blob = dataURItoBlob(mediaStream);
-                    let currentTimestamp = Date.now();
-                    const file = new File([blob], currentTimestamp.toString(), {
-                      type: blob.type,
-                      lastModified: new Date().getTime(),
-                    });
-                    setFileArrayTemp(prev => [...prev, file]);
-                    setFileArray(prev => [...prev, file]);
-                    setCurrentStep(2);
-                    setStepCompleted(false);
-                    setWait(false);
-                    setQuestion("Turn Right");
+                  // Step 2: Turn Left
+                  else if (currentStep === 1 && tiltAngle >= 100 && tiltAngle <= 115) {
+                    setStepCompleted(true);
+                    setWait(true);
+                    setQuestion("Turn Left - Capturing...");
+                    setTimeout(() => {
+                      setCurrentStep(2);
+                      setStepCompleted(false);
+                      setWait(false);
+                      setQuestion("Turn Right");
+                    }, 1000);
                   }
-                }, 1000);
-              }
-              // Step 3: Turn Right
-              else if (currentStep === 2 && tiltAngle >= 65 && tiltAngle <= 80) {
-                setStepCompleted(true);
-                setWait(true);
-                setQuestion("Turn Right - Capturing...");
-                
-                setTimeout(() => {
-                  const mediaStream = webcamRef.current?.getScreenshot();
-                  if (mediaStream) {
-                    const blob = dataURItoBlob(mediaStream);
-                    let currentTimestamp = Date.now();
-                    const file = new File([blob], currentTimestamp.toString(), {
-                      type: blob.type,
-                      lastModified: new Date().getTime(),
-                    });
-                    setFileArrayTemp(prev => [...prev, file]);
-                    setFileArray(prev => [...prev, file]);
-                    setCompleted(true);
-                    setWait(false);
-                    setShowSuccess(true);
-                    setQuestion("Liveness check completed successfully!");
+                  // Step 3: Turn Right
+                  else if (currentStep === 2 && tiltAngle >= 65 && tiltAngle <= 80) {
+                    setStepCompleted(true);
+                    setWait(true);
+                    setQuestion("Turn Right - Capturing...");
+                    setTimeout(() => {
+                      setCompleted(true);
+                      setWait(false);
+                      setShowSuccess(true);
+                      setQuestion("Liveness check completed successfully!");
+                    }, 1000);
                   }
-                }, 1000);
+                }
               }
             }
           }
+          canvasCtx.restore();
         }
-      }
-      canvasCtx.restore();
-    }
-  }
-
-  useEffect(() => {
-    if (start && webcamRef.current && canvasRef.current && !completed) {
+      };
       const loadFaceMeshScript = () => {
         return new Promise<void>((resolve, reject) => {
-          if ((window as any).FaceMesh) {
+          if ((window as MediaPipeWindow).FaceMesh) {
             resolve();
             return;
           }
@@ -268,10 +208,9 @@ export default function LivenessCheck({ onSuccess, onNextStep, canProceed = fals
           document.body.appendChild(script);
         });
       };
-
       const loadDrawingUtilsScript = () => {
         return new Promise<void>((resolve, reject) => {
-          if ((window as any).drawConnectors) {
+          if ((window as MediaPipeWindow).drawConnectors) {
             resolve();
             return;
           }
@@ -283,29 +222,26 @@ export default function LivenessCheck({ onSuccess, onNextStep, canProceed = fals
           document.body.appendChild(script);
         });
       };
-
       Promise.all([loadFaceMeshScript(), loadDrawingUtilsScript()]).then(() => {
-        const faceMesh = new (window as any).FaceMesh({
+        const FaceMeshCtor = (window as MediaPipeWindow).FaceMesh;
+        if (!FaceMeshCtor) return;
+        const faceMesh = new FaceMeshCtor({
           locateFile: (file: string) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
           },
-        });
-
+        }) as FaceMeshInstance;
         faceMesh.setOptions({
           maxNumFaces: 1,
           minDetectionConfidence: 0.5,
           minTrackingConfidence: 0.5,
         });
-
         faceMesh.onResults(onResults);
-
         const sendToMediaPipe = async () => {
           if (webcamRef.current?.video && !completed) {
             await faceMesh.send({ image: webcamRef.current.video });
             requestAnimationFrame(sendToMediaPipe);
           }
         };
-
         sendToMediaPipe();
       });
     }
@@ -314,8 +250,6 @@ export default function LivenessCheck({ onSuccess, onNextStep, canProceed = fals
   useEffect(() => {
     if (completed) {
       setQuestion("Please wait while we process...");
-      // Here you would typically send the fileArray to your backend
-      // For now, we'll just call onSuccess
       setTimeout(() => {
         if (onSuccess) onSuccess();
       }, 2000);

@@ -5,7 +5,7 @@ export async function GET() {
     // In a real app, you'd fetch from a database
     // For demo purposes, we'll return an empty array
     return NextResponse.json([]);
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: 'Failed to fetch submissions' },
       { status: 500 }
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     };
 
     return NextResponse.json(submission, { status: 201 });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: 'Failed to create submission' },
       { status: 500 }
